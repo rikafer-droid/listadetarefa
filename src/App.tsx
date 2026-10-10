@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { useTasks } from './hooks/useTasks';
 import { Navbar } from './components/Navbar';
 import { StatsOverview } from './components/StatsOverview';
@@ -7,12 +8,16 @@ import { AnalyticsView } from './components/AnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { TaskModal } from './components/TaskModal';
 import { LogoutModal } from './components/LogoutModal';
+import { UserProfileModal } from './components/UserProfileModal';
 import { SupabaseModal } from './components/SupabaseModal';
+import { AuthScreen } from './components/AuthScreen';
 import { ToastContainer } from './components/ToastContainer';
 import type { Task, Priority } from './types/task';
-import { Heart, CloudCheck, RefreshCw } from 'lucide-react';
+import { Heart, CloudCheck, RefreshCw, Sparkles, CheckSquare } from 'lucide-react';
 
-export default function App() {
+function MainApp() {
+  const { user, profile, isLoading: authLoading, isPasswordRecovery } = useAuth();
+  
   const {
     tasks,
     categories,
@@ -38,18 +43,42 @@ export default function App() {
     deleteTask,
     addCategory,
     resetAllData,
-    isLoading,
+    isLoading: tasksLoading,
     isSyncing,
     isSupabaseOnline,
     lastSyncedAt,
     refreshData,
-  } = useTasks();
+  } = useTasks(user?.id);
 
   // Modais
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [taskToEdit, setTaskToEdit] = useState<Task | null>(null);
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
+
+  // Tela de Carregamento de Autenticação Inicial
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-4 animate-pulse">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-500 to-violet-500 flex items-center justify-center text-white shadow-xl shadow-indigo-500/25">
+            <CheckSquare className="w-8 h-8 stroke-[2.5]" />
+          </div>
+          <div className="text-center">
+            <h2 className="text-xl font-black text-white">TaskFlow</h2>
+            <p className="text-xs text-indigo-300">Carregando autenticação...</p>
+          </div>
+          <RefreshCw className="w-6 h-6 text-indigo-400 animate-spin mt-2" />
+        </div>
+      </div>
+    );
+  }
+
+  // Se não estiver autenticado ou em modo de recuperação de senha, exibe a tela de login/cadastro
+  if (!user || isPasswordRecovery) {
+    return <AuthScreen />;
+  }
 
   // Abrir modal de criação
   const handleOpenNewTask = () => {
@@ -92,39 +121,47 @@ export default function App() {
     }
   };
 
+  const displayName = profile?.fullName || user.email?.split('@')[0] || 'Usuário';
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-indigo-500 selection:text-white">
-      {/* Navbar com abas Tarefas, Análises, Calendário e Status Supabase */}
+      {/* Navbar com abas Tarefas, Análises, Calendário e Perfil */}
       <Navbar
         currentTab={currentTab}
         onTabChange={setCurrentTab}
         pendingCount={stats.pending}
         onOpenLogout={() => setIsLogoutModalOpen(true)}
+        onOpenProfile={() => setIsProfileModalOpen(true)}
         onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
         isSupabaseOnline={isSupabaseOnline}
         isSyncing={isSyncing}
       />
 
-      {/* Barra de Status da Nuvem Supabase */}
+      {/* Barra de Status e Boas-vindas ao Usuário */}
       <div className="bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-800 text-xs py-1.5 px-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <CloudCheck className="w-4 h-4 text-emerald-600" />
             <span>
-              Conectado ao Supabase: <strong className="font-semibold">lista-tarefas</strong> (todas as ações salvam em tempo real)
+              Conectado como <strong className="font-semibold text-emerald-950">{displayName}</strong> ({user.email})
             </span>
           </div>
-          {isSyncing && (
-            <span className="flex items-center gap-1 font-medium text-emerald-700">
-              <RefreshCw className="w-3 h-3 animate-spin" /> Sincronizando...
+          <div className="flex items-center gap-3">
+            {isSyncing && (
+              <span className="flex items-center gap-1 font-medium text-emerald-700">
+                <RefreshCw className="w-3 h-3 animate-spin" /> Sincronizando...
+              </span>
+            )}
+            <span className="hidden sm:inline-flex items-center gap-1 text-[11px] text-emerald-700 font-medium">
+              <Sparkles className="w-3 h-3" /> Tarefas exclusivas do seu perfil
             </span>
-          )}
+          </div>
         </div>
       </div>
 
       {/* Conteúdo Principal */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {isLoading ? (
+        {tasksLoading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
             <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin" />
             <p className="text-sm font-semibold text-slate-600">Sincronizando tarefas com o Supabase...</p>
@@ -228,6 +265,15 @@ export default function App() {
         onAddCategory={addCategory}
       />
 
+      <UserProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        onOpenLogoutModal={() => setIsLogoutModalOpen(true)}
+        totalTasks={stats.total}
+        completedTasks={stats.completed}
+        pendingTasks={stats.pending}
+      />
+
       <LogoutModal
         isOpen={isLogoutModalOpen}
         onClose={() => setIsLogoutModalOpen(false)}
@@ -249,5 +295,13 @@ export default function App() {
       {/* Notificações Toasts com Desfazer */}
       <ToastContainer toasts={toasts} onDismiss={removeToast} />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
   );
 }

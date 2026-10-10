@@ -131,39 +131,41 @@ export const INITIAL_TASKS: Task[] = [
   },
 ];
 
-const STORAGE_KEYS = {
-  TASKS: 'taskflow_tasks_v1',
-  CATEGORIES: 'taskflow_categories_v1',
+const getStorageKey = (type: 'tasks' | 'categories', userId?: string) => {
+  const prefix = userId ? `taskflow_${userId}` : 'taskflow_global';
+  return `${prefix}_${type}_v1`;
 };
 
 export const storageService = {
-  getTasks: (): Task[] => {
+  getTasks: (userId?: string): Task[] => {
     try {
-      const data = localStorage.getItem(STORAGE_KEYS.TASKS);
+      const key = getStorageKey('tasks', userId);
+      const data = localStorage.getItem(key);
       if (!data) {
-        localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify(INITIAL_TASKS));
-        return INITIAL_TASKS;
+        return [];
       }
       return JSON.parse(data);
     } catch (error) {
       console.error('Erro ao ler tarefas do localStorage:', error);
-      return INITIAL_TASKS;
+      return [];
     }
   },
 
-  saveTasks: (tasks: Task[]): void => {
+  saveTasks: (tasks: Task[], userId?: string): void => {
     try {
-      localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify(tasks));
+      const key = getStorageKey('tasks', userId);
+      localStorage.setItem(key, JSON.stringify(tasks));
     } catch (error) {
       console.error('Erro ao salvar tarefas no localStorage:', error);
     }
   },
 
-  getCategories: (): Category[] => {
+  getCategories: (userId?: string): Category[] => {
     try {
-      const data = localStorage.getItem(STORAGE_KEYS.CATEGORIES);
+      const key = getStorageKey('categories', userId);
+      const data = localStorage.getItem(key);
       if (!data) {
-        localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(DEFAULT_CATEGORIES));
+        localStorage.setItem(key, JSON.stringify(DEFAULT_CATEGORIES));
         return DEFAULT_CATEGORIES;
       }
       return JSON.parse(data);
@@ -173,23 +175,26 @@ export const storageService = {
     }
   },
 
-  saveCategories: (categories: Category[]): void => {
+  saveCategories: (categories: Category[], userId?: string): void => {
     try {
-      localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
+      const key = getStorageKey('categories', userId);
+      localStorage.setItem(key, JSON.stringify(categories));
     } catch (error) {
       console.error('Erro ao salvar categorias no localStorage:', error);
     }
   },
 
-  exportDataJson: (): string => {
-    const tasks = storageService.getTasks();
-    const categories = storageService.getCategories();
+  exportDataJson: (userId?: string): string => {
+    const tasks = storageService.getTasks(userId);
+    const categories = storageService.getCategories(userId);
     return JSON.stringify({ tasks, categories, exportedAt: new Date().toISOString() }, null, 2);
   },
 
-  resetToDefault: (): { tasks: Task[]; categories: Category[] } => {
-    localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify(INITIAL_TASKS));
-    localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(DEFAULT_CATEGORIES));
+  resetToDefault: (userId?: string): { tasks: Task[]; categories: Category[] } => {
+    const keyTasks = getStorageKey('tasks', userId);
+    const keyCats = getStorageKey('categories', userId);
+    localStorage.setItem(keyTasks, JSON.stringify(INITIAL_TASKS));
+    localStorage.setItem(keyCats, JSON.stringify(DEFAULT_CATEGORIES));
     return { tasks: INITIAL_TASKS, categories: DEFAULT_CATEGORIES };
   },
 };

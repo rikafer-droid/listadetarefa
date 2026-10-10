@@ -14,12 +14,14 @@ export const supabase: SupabaseClient = createClient(
     auth: {
       persistSession: true,
       autoRefreshToken: true,
+      detectSessionInUrl: true,
     },
   }
 );
 
 export interface DbTask {
   id: string;
+  user_id?: string | null;
   title: string;
   description: string | null;
   completed: boolean;
@@ -32,6 +34,7 @@ export interface DbTask {
 
 export interface DbCategory {
   id: string;
+  user_id?: string | null;
   name: string;
   color: Category['color'];
   created_at?: string;
@@ -40,6 +43,7 @@ export interface DbCategory {
 export function dbTaskToTask(db: DbTask): Task {
   return {
     id: db.id,
+    userId: db.user_id || undefined,
     title: db.title,
     description: db.description || undefined,
     completed: db.completed,
@@ -51,9 +55,10 @@ export function dbTaskToTask(db: DbTask): Task {
   };
 }
 
-export function taskToDbTask(task: Partial<Task>): Partial<DbTask> {
+export function taskToDbTask(task: Partial<Task>, userId?: string): Partial<DbTask> {
   const db: Partial<DbTask> = {};
   if (task.id !== undefined) db.id = task.id;
+  if (userId || task.userId) db.user_id = userId || task.userId;
   if (task.title !== undefined) db.title = task.title;
   if (task.description !== undefined) db.description = task.description || null;
   if (task.completed !== undefined) db.completed = task.completed;
@@ -73,21 +78,31 @@ export function dbCategoryToCategory(db: DbCategory): Category {
   };
 }
 
-export function categoryToDbCategory(category: Category): DbCategory {
-  return {
+export function categoryToDbCategory(category: Category, userId?: string): DbCategory {
+  const result: DbCategory = {
     id: category.id,
     name: category.name,
     color: category.color,
   };
+  if (userId) {
+    result.user_id = userId;
+  }
+  return result;
 }
 
 export const supabaseService = {
-  // Buscar tarefas
-  async getTasks(): Promise<Task[]> {
-    const { data, error } = await supabase
+  // Buscar tarefas de um usuário específico
+  async getTasks(userId?: string): Promise<Task[]> {
+    let query = supabase
       .from('tasks')
       .select('*')
       .order('created_at', { ascending: false });
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('Erro ao buscar tarefas do Supabase:', error);
@@ -97,9 +112,9 @@ export const supabaseService = {
     return (data as DbTask[]).map(dbTaskToTask);
   },
 
-  // Criar tarefa
-  async createTask(task: Task): Promise<Task> {
-    const dbPayload = taskToDbTask(task);
+  // Criar tarefa vinculada ao usuário
+  async createTask(task: Task, userId?: string): Promise<Task> {
+    const dbPayload = taskToDbTask(task, userId);
     const { data, error } = await supabase
       .from('tasks')
       .insert([dbPayload])
@@ -115,14 +130,18 @@ export const supabaseService = {
   },
 
   // Atualizar tarefa
-  async updateTask(id: string, updates: Partial<Task>): Promise<Task> {
-    const dbPayload = taskToDbTask(updates);
-    const { data, error } = await supabase
+  async updateTask(id: string, updates: Partial<Task>, userId?: string): Promise<Task> {
+    const dbPayload = taskToDbTask(updates, userId);
+    let query = supabase
       .from('tasks')
       .update(dbPayload)
-      .eq('id', id)
-      .select()
-      .single();
+      .eq('id', id);
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data, error } = await query.select().single();
 
     if (error) {
       console.error('Erro ao atualizar tarefa no Supabase:', error);
@@ -133,11 +152,17 @@ export const supabaseService = {
   },
 
   // Excluir tarefa
-  async deleteTask(id: string): Promise<void> {
-    const { error } = await supabase
+  async deleteTask(id: string, userId?: string): Promise<void> {
+    let query = supabase
       .from('tasks')
       .delete()
       .eq('id', id);
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { error } = await query;
 
     if (error) {
       console.error('Erro ao excluir tarefa do Supabase:', error);
@@ -145,12 +170,18 @@ export const supabaseService = {
     }
   },
 
-  // Buscar categorias
-  async getCategories(): Promise<Category[]> {
-    const { data, error } = await supabase
+  // Buscar categorias (globais ou do usuário)
+  async getCategories(userId?: string): Promise<Category[]> {
+    let query = supabase
       .from('categories')
       .select('*')
       .order('created_at', { ascending: true });
+
+    if (userId) {
+      query = query.or(`user_id.is.null,user_id.eq.${userId}`);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('Erro ao buscar categorias do Supabase:', error);
@@ -161,8 +192,8 @@ export const supabaseService = {
   },
 
   // Criar categoria
-  async createCategory(category: Category): Promise<Category> {
-    const dbPayload = categoryToDbCategory(category);
+  async createCategory(category: Category, userId?: string): Promise<Category> {
+    const dbPayload = categoryToDbCategory(category, userId);
     const { data, error } = await supabase
       .from('categories')
       .insert([dbPayload])
@@ -177,18 +208,17 @@ export const supabaseService = {
     return dbCategoryToCategory(data as DbCategory);
   },
 
-  // Resetar dados (re-seed)
-  async resetData(tasks: Task[], categories: Category[]): Promise<void> {
-    // Limpar tabelas
-    await supabase.from('tasks').delete().neq('id', 'placeholder');
-    await supabase.from('categories').delete().neq('id', 'placeholder');
-
-    // Inserir categorias
-    const catPayload = categories.map(categoryToDbCategory);
-    await supabase.from('categories').insert(catPayload);
+  // Resetar dados para o usuário atual
+  async resetData(tasks: Task[], _categories: Category[], userId?: string): Promise<void> {
+    // Limpar tarefas do usuário
+    if (userId) {
+      await supabase.from('tasks').delete().eq('user_id', userId);
+    } else {
+      await supabase.from('tasks').delete().neq('id', 'placeholder');
+    }
 
     // Inserir tarefas
-    const taskPayload = tasks.map((t) => taskToDbTask(t));
+    const taskPayload = tasks.map((t) => taskToDbTask(t, userId));
     await supabase.from('tasks').insert(taskPayload);
   },
 
@@ -214,14 +244,26 @@ export const supabaseService = {
 export const SUPABASE_SCHEMA_SQL = `-- 1. Tabela de Categorias
 CREATE TABLE IF NOT EXISTS public.categories (
   id TEXT PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   color JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 2. Tabela de Tarefas
+-- 2. Tabela de Perfis
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  full_name TEXT,
+  avatar_url TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 3. Tabela de Tarefas por Usuário
 CREATE TABLE IF NOT EXISTS public.tasks (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE DEFAULT auth.uid(),
   title TEXT NOT NULL,
   description TEXT,
   completed BOOLEAN NOT NULL DEFAULT false,
@@ -231,16 +273,4 @@ CREATE TABLE IF NOT EXISTS public.tasks (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   completed_at TIMESTAMPTZ
 );
-
--- Políticas RLS
-ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Permitir todas as operacoes de categorias para anon"
-  ON public.categories FOR ALL TO anon, authenticated
-  USING (true) WITH CHECK (true);
-
-CREATE POLICY "Permitir todas as operacoes de tarefas para anon"
-  ON public.tasks FOR ALL TO anon, authenticated
-  USING (true) WITH CHECK (true);
 `;

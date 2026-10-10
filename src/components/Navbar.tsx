@@ -1,12 +1,22 @@
 import React from 'react';
 import type { ViewTab } from '../types/task';
-import { CheckSquare, BarChart3, Calendar, LogOut, Database, Sparkles, RefreshCw } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import {
+  CheckSquare,
+  BarChart3,
+  Calendar,
+  LogOut,
+  Database,
+  Sparkles,
+  RefreshCw,
+} from 'lucide-react';
 
 interface NavbarProps {
   currentTab: ViewTab;
   onTabChange: (tab: ViewTab) => void;
   pendingCount: number;
   onOpenLogout: () => void;
+  onOpenProfile: () => void;
   onOpenSupabaseModal: () => void;
   isSupabaseOnline?: boolean;
   isSyncing?: boolean;
@@ -17,10 +27,15 @@ export const Navbar: React.FC<NavbarProps> = ({
   onTabChange,
   pendingCount,
   onOpenLogout,
+  onOpenProfile,
   onOpenSupabaseModal,
   isSupabaseOnline = true,
   isSyncing = false,
 }) => {
+  const { user, profile } = useAuth();
+  const displayName = profile?.fullName || user?.email?.split('@')[0] || 'Usuário';
+  const initialLetter = (displayName.charAt(0) || 'U').toUpperCase();
+
   return (
     <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200/80 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -97,13 +112,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           </nav>
 
-          {/* Right Actions: Supabase Status & Sair */}
+          {/* Right Actions: Supabase Status, User Profile & Sair */}
           <div className="flex items-center gap-2 sm:gap-3">
             <button
               type="button"
               onClick={onOpenSupabaseModal}
               title={isSupabaseOnline ? 'Conectado ao Supabase: lista-tarefas' : 'Modo offline com LocalStorage'}
-              className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+              className={`hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
                 isSupabaseOnline
                   ? 'text-emerald-700 bg-emerald-50/90 border-emerald-200 hover:bg-emerald-100/90 shadow-xs'
                   : 'text-amber-700 bg-amber-50 border-amber-200 hover:bg-amber-100'
@@ -118,8 +133,29 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               )}
               <Database className="w-3.5 h-3.5" />
-              <span>Supabase: lista-tarefas</span>
+              <span>Supabase</span>
             </button>
+
+            {/* Perfil do Usuário Logado */}
+            {user && (
+              <button
+                type="button"
+                id="btn-perfil-usuario"
+                onClick={onOpenProfile}
+                title={`Perfil de ${displayName} (${user.email})`}
+                className="flex items-center gap-2 p-1 sm:px-2.5 sm:py-1 rounded-xl bg-slate-50 hover:bg-indigo-50/60 border border-slate-200/80 hover:border-indigo-200 transition-all cursor-pointer"
+              >
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-indigo-600 to-violet-500 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                  {initialLetter}
+                </div>
+                <div className="hidden sm:block text-left">
+                  <span className="block text-xs font-bold text-slate-800 leading-tight truncate max-w-[110px]">
+                    {displayName}
+                  </span>
+                  <span className="block text-[10px] text-slate-500 leading-tight">Meu Perfil</span>
+                </div>
+              </button>
+            )}
 
             <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
 
@@ -128,7 +164,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               type="button"
               id="btn-sair"
               onClick={onOpenLogout}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-all duration-150 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-all duration-150 cursor-pointer"
               title="Encerrar sessão ou gerenciar dados"
             >
               <LogOut className="w-4 h-4" />

@@ -1,13 +1,13 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import type { Task, Category, Priority, FilterStatus, SortOption, ToastNotification, ViewTab } from '../types/task';
-import { storageService, DEFAULT_CATEGORIES, INITIAL_TASKS } from '../services/storage';
+import { storageService, DEFAULT_CATEGORIES } from '../services/storage';
 import { supabaseService, isSupabaseConfigured } from '../services/supabase';
 import confetti from 'canvas-confetti';
 import { parseISO, startOfDay } from 'date-fns';
 
-export function useTasks() {
-  const [tasks, setTasks] = useState<Task[]>(() => storageService.getTasks());
-  const [categories, setCategories] = useState<Category[]>(() => storageService.getCategories());
+export function useTasks(userId?: string) {
+  const [tasks, setTasks] = useState<Task[]>(() => storageService.getTasks(userId));
+  const [categories, setCategories] = useState<Category[]>(() => storageService.getCategories(userId));
   const [currentTab, setCurrentTab] = useState<ViewTab>('tarefas');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -27,7 +27,7 @@ export function useTasks() {
   // Referência para evitar loop de sincronização
   const isInternalUpdate = useRef(false);
 
-  // Função para disparar Toasts
+  // Disparar Toasts
   const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
     const id = Math.random().toString(36).substring(2, 9);
     const newToast: ToastNotification = { ...toast, id };
@@ -56,7 +56,7 @@ export function useTasks() {
     }
   }, []);
 
-  // Carregar dados iniciais do Supabase
+  // Carregar dados do Supabase
   const loadSupabaseData = useCallback(async (isInitial = false) => {
     if (!isSupabaseConfigured) {
       setIsLoading(false);
@@ -68,25 +68,21 @@ export function useTasks() {
       setIsSyncing(true);
 
       const [remoteCategories, remoteTasks] = await Promise.all([
-        supabaseService.getCategories(),
-        supabaseService.getTasks(),
+        supabaseService.getCategories(userId),
+        supabaseService.getTasks(userId),
       ]);
 
-      // Se o banco estiver vazio pela primeira vez, faz o seed inicial
-      if (remoteCategories.length === 0 && remoteTasks.length === 0) {
-        await supabaseService.resetData(INITIAL_TASKS, DEFAULT_CATEGORIES);
+      // Se o usuário não tiver categorias ou tarefas e for o primeiro acesso, podemos prover categorias padrão
+      if (remoteCategories.length === 0) {
         setCategories(DEFAULT_CATEGORIES);
-        setTasks(INITIAL_TASKS);
-        storageService.saveCategories(DEFAULT_CATEGORIES);
-        storageService.saveTasks(INITIAL_TASKS);
+        storageService.saveCategories(DEFAULT_CATEGORIES, userId);
       } else {
-        if (remoteCategories.length > 0) {
-          setCategories(remoteCategories);
-          storageService.saveCategories(remoteCategories);
-        }
-        setTasks(remoteTasks);
-        storageService.saveTasks(remoteTasks);
+        setCategories(remoteCategories);
+        storageService.saveCategories(remoteCategories, userId);
       }
+
+      setTasks(remoteTasks);
+      storageService.saveTasks(remoteTasks, userId);
 
       setIsSupabaseOnline(true);
       setLastSyncedAt(new Date());
@@ -97,10 +93,13 @@ export function useTasks() {
       setIsLoading(false);
       setIsSyncing(false);
     }
-  }, []);
+  }, [userId]);
 
-  // Efeito de inicialização e Realtime Subscription
+  // Efeito de inicialização quando o userId muda
   useEffect(() => {
+    // Resetar estado local para o usuário atual
+    setTasks(storageService.getTasks(userId));
+    setCategories(storageService.getCategories(userId));
     loadSupabaseData(true);
 
     if (isSupabaseConfigured) {
@@ -113,18 +112,18 @@ export function useTasks() {
         unsubscribe();
       };
     }
-  }, [loadSupabaseData]);
+  }, [userId, loadSupabaseData]);
 
-  // Sincronização de backup local
+  // Sincronização de backup local por usuário
   useEffect(() => {
-    storageService.saveTasks(tasks);
-  }, [tasks]);
+    storageService.saveTasks(tasks, userId);
+  }, [tasks, userId]);
 
   useEffect(() => {
-    storageService.saveCategories(categories);
-  }, [categories]);
+    storageService.saveCategories(categories, userId);
+  }, [categories, userId]);
 
-  // Operações CRUD com sincronização Supabase
+  // Operações CRUD
   const addTask = useCallback(
     async (taskData: {
       title: string;
@@ -136,6 +135,7 @@ export function useTasks() {
       const tempId = 'task-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
       const newTask: Task = {
         id: tempId,
+        userId,
         title: taskData.title.trim(),
         description: taskData.description?.trim() || undefined,
         completed: false,
@@ -151,15 +151,14 @@ export function useTasks() {
       addToast({
         type: 'success',
         title: 'Tarefa criada!',
-        message: `"${newTask.title}" salva no Supabase.`,
+        message: `"${newTask.title}" salva no seu perfil.`,
       });
 
       if (isSupabaseConfigured) {
         try {
           isInternalUpdate.current = true;
           setIsSyncing(true);
-          const savedTask = await supabaseService.createTask(newTask);
-          // Atualiza com os dados persistidos do Supabase
+          const savedTask = await supabaseService.createTask(newTask, userId);
           setTasks((prev) => prev.map((t) => (t.id === tempId ? savedTask : t)));
           setLastSyncedAt(new Date());
           setIsSupabaseOnline(true);
@@ -179,7 +178,7 @@ export function useTasks() {
         }
       }
     },
-    [addToast]
+    [userId, addToast]
   );
 
   const updateTask = useCallback(
@@ -213,10 +212,18 @@ export function useTasks() {
         try {
           isInternalUpdate.current = true;
           setIsSyncing(true);
-          await supabaseService.updateTask(id, {
-            ...updatedFields,
-            completedAt: isMarkingCompleted ? new Date().toISOString() : updatedFields.completed === false ? null : undefined,
-          });
+          await supabaseService.updateTask(
+            id,
+            {
+              ...updatedFields,
+              completedAt: isMarkingCompleted
+                ? new Date().toISOString()
+                : updatedFields.completed === false
+                ? null
+                : undefined,
+            },
+            userId
+          );
           setLastSyncedAt(new Date());
           setIsSupabaseOnline(true);
         } catch (err) {
@@ -230,7 +237,7 @@ export function useTasks() {
         }
       }
     },
-    [addToast]
+    [userId, addToast]
   );
 
   const toggleTask = useCallback(
@@ -273,10 +280,14 @@ export function useTasks() {
         try {
           isInternalUpdate.current = true;
           setIsSyncing(true);
-          await supabaseService.updateTask(id, {
-            completed: nextState,
-            completedAt: nextState ? new Date().toISOString() : null,
-          });
+          await supabaseService.updateTask(
+            id,
+            {
+              completed: nextState,
+              completedAt: nextState ? new Date().toISOString() : null,
+            },
+            userId
+          );
           setLastSyncedAt(new Date());
           setIsSupabaseOnline(true);
         } catch (err) {
@@ -290,7 +301,7 @@ export function useTasks() {
         }
       }
     },
-    [triggerConfetti, addToast]
+    [userId, triggerConfetti, addToast]
   );
 
   const deleteTask = useCallback(
@@ -304,12 +315,12 @@ export function useTasks() {
       addToast({
         type: 'warning',
         title: 'Tarefa removida',
-        message: `"${taskToDelete.title}" foi excluída do Supabase.`,
+        message: `"${taskToDelete.title}" foi excluída.`,
         undoAction: async () => {
           setTasks((prev) => [taskToDelete, ...prev]);
           if (isSupabaseConfigured) {
             try {
-              await supabaseService.createTask(taskToDelete);
+              await supabaseService.createTask(taskToDelete, userId);
             } catch (err) {
               console.error('Erro ao restaurar tarefa no Supabase:', err);
             }
@@ -326,7 +337,7 @@ export function useTasks() {
         try {
           isInternalUpdate.current = true;
           setIsSyncing(true);
-          await supabaseService.deleteTask(id);
+          await supabaseService.deleteTask(id, userId);
           setLastSyncedAt(new Date());
           setIsSupabaseOnline(true);
         } catch (err) {
@@ -340,7 +351,7 @@ export function useTasks() {
         }
       }
     },
-    [tasks, addToast]
+    [tasks, userId, addToast]
   );
 
   const addCategory = useCallback(
@@ -356,7 +367,7 @@ export function useTasks() {
         try {
           isInternalUpdate.current = true;
           setIsSyncing(true);
-          await supabaseService.createCategory(category);
+          await supabaseService.createCategory(category, userId);
           setLastSyncedAt(new Date());
           setIsSupabaseOnline(true);
         } catch (err) {
@@ -370,18 +381,18 @@ export function useTasks() {
         }
       }
     },
-    [addToast]
+    [userId, addToast]
   );
 
   const resetAllData = useCallback(async () => {
     setIsSyncing(true);
-    const reset = storageService.resetToDefault();
+    const reset = storageService.resetToDefault(userId);
     setTasks(reset.tasks);
     setCategories(reset.categories);
 
     if (isSupabaseConfigured) {
       try {
-        await supabaseService.resetData(reset.tasks, reset.categories);
+        await supabaseService.resetData(reset.tasks, reset.categories, userId);
         setIsSupabaseOnline(true);
         setLastSyncedAt(new Date());
       } catch (err) {
@@ -395,7 +406,7 @@ export function useTasks() {
       title: 'Dados restaurados',
       message: 'A lista de tarefas e categorias padrão foi sincronizada com o Supabase.',
     });
-  }, [addToast]);
+  }, [userId, addToast]);
 
   // Lista filtrada e ordenada
   const filteredTasks = useMemo(() => {
